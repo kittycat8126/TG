@@ -1,36 +1,58 @@
-// textures.js — Loads real NASA textures via CDN for Google Earth look
-// These URLs work in the browser (CORS-enabled via unpkg CDN)
-
-export const TEXTURE_URLS = {
-  day:    "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
-  night:  "https://unpkg.com/three-globe/example/img/earth-night.jpg",
-  bump:   "https://unpkg.com/three-globe/example/img/earth-topology.png",
-  clouds: "https://unpkg.com/three-globe/example/img/earth-clouds.png",
-};
-
-// Load all 4 textures, call onProgress(count) each time one loads
-// Returns promise that resolves to { dayTex, nightTex, bumpTex, cloudTex }
+// textures.js — Multiple CDN fallbacks to guarantee textures load
 export function loadTextures(THREE, onProgress) {
   const loader = new THREE.TextureLoader();
   loader.crossOrigin = "anonymous";
-
   let loaded = 0;
-  function load(url) {
+
+  // Try multiple CDN sources in order until one works
+  const SOURCES = {
+    day: [
+      "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
+      "https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg",
+    ],
+    night: [
+      "https://unpkg.com/three-globe/example/img/earth-night.jpg",
+      "https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg",
+    ],
+    bump: [
+      "https://unpkg.com/three-globe/example/img/earth-topology.png",
+      "https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-topology.png",
+    ],
+    clouds: [
+      "https://unpkg.com/three-globe/example/img/earth-water.png",
+      "https://cdn.jsdelivr.net/npm/three-globe@2/example/img/earth-clouds.png",
+    ],
+  };
+
+  function tryLoad(urls, index = 0) {
     return new Promise((resolve) => {
+      if (index >= urls.length) {
+        console.warn("[Textures] All sources failed for:", urls[0]);
+        loaded++; onProgress?.(loaded);
+        resolve(null);
+        return;
+      }
       loader.load(
-        url,
-        (tex) => { loaded++; onProgress?.(loaded); resolve(tex); },
+        urls[index],
+        (tex) => {
+          console.log(`[Textures] ✅ Loaded: ${urls[index]}`);
+          loaded++; onProgress?.(loaded);
+          resolve(tex);
+        },
         undefined,
-        () => { loaded++; onProgress?.(loaded); resolve(null); } // fail gracefully
+        () => {
+          console.warn(`[Textures] ❌ Failed: ${urls[index]}, trying next...`);
+          tryLoad(urls, index + 1).then(resolve);
+        }
       );
     });
   }
 
   return Promise.all([
-    load(TEXTURE_URLS.day),
-    load(TEXTURE_URLS.night),
-    load(TEXTURE_URLS.bump),
-    load(TEXTURE_URLS.clouds),
+    tryLoad(SOURCES.day),
+    tryLoad(SOURCES.night),
+    tryLoad(SOURCES.bump),
+    tryLoad(SOURCES.clouds),
   ]).then(([dayTex, nightTex, bumpTex, cloudTex]) => ({
     dayTex, nightTex, bumpTex, cloudTex,
   }));

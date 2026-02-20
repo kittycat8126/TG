@@ -1,49 +1,138 @@
-// useAttacks.js — manages the live attack arc system
-import { useRef, useState, useEffect } from "react";
-import { spawnAttack, updateAttacks } from "../attacks/AttackArcs";
+// useAttacks.js — Part 7: Supports filters, pause, speed control
+import { useRef, useState, useEffect, useCallback } from "react";
+import { spawnAttack, updateAttacks }               from "../attacks/AttackArcs";
+import { createDataRouter }                          from "../api/dataRouter";
+import { pickTwoCities, pickAttackType, ATTACK_TYPES } from "../attacks/attackData";
 
-const SPAWN_MIN = 0.8;  // seconds between spawns
-const SPAWN_MAX = 1.8;
-const MAX_LOG   = 8;
+const BASE_INTERVAL = 1.2;
+const MAX_LOG       = 8;
 
-export function useAttacks(sceneRef) {
+// Build default filters — all enabled
+export function defaultFilters() {
+  return Object.fromEntries(ATTACK_TYPES.map(t => [t.name, true]));
+}
+
+export function useAttacks(sceneRef, apiConfig = {}) {
   const attacksRef   = useRef([]);
   const lastSpawnRef = useRef(0);
   const tRef         = useRef(0);
+  const routerRef    = useRef(null);
 
-  const [log,    setLog]    = useState([]);
-  const [total,  setTotal]  = useState(0);
+  const [log,     setLog]     = useState([]);
+  const [total,   setTotal]   = useState(0);
+  const [filters, setFilters] = useState(defaultFilters());
+  const [paused,  setPaused]  = useState(false);
+  const [speed,   setSpeed]   = useState(1);
+
+  // Expose refs so tickAttacks closure always reads latest value
+  const filtersRef = useRef(filters);
+  const pausedRef  = useRef(paused);
+  const speedRef   = useRef(speed);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  useEffect(() => { pausedRef.current  = paused;  }, [paused]);
+  useEffect(() => { speedRef.current   = speed;   }, [speed]);
+
+  // Init data router
+  useEffect(() => {
+    const hasKeys = apiConfig.cloudflareToken || apiConfig.abuseKey || apiConfig.alienVaultKey;
+    if (hasKeys) {
+      console.log("[useAttacks] 🔑 API keys detected — starting live data router");
+      routerRef.current = createDataRouter(apiConfig);
+    } else {
+      console.log("[useAttacks] ⚠️ No API keys — using mock data");
+    }
+  }, []);
 
   function onNewEntry(entry) {
-    setLog(prev => [entry, ...prev].slice(0, MAX_LOG));
-    setTotal(n => n + 1);
+    setLog(prev  => [entry, ...prev].slice(0, MAX_LOG));
+    setTotal(n   => n + 1);
   }
 
-  // Called every frame from the render loop (via ref so no re-renders)
-  function tickAttacks(dt) {
+  async function getNextEvent() {
+    // Try live router first
+    if (routerRef.current) {
+      const event = await routerRef.current.getNextEvent();
+      if (event) return event;
+    }
+    // Mock fallback
+    const [srcName, src, dstName, dst] = pickTwoCities();
+    return { srcName, src, dstName, dst, type: pickAttackType() };
+  }
+
+  const tickAttacks = useCallback((dt) => {
     const s = sceneRef.current;
     if (!s) return;
 
-    tRef.current += dt;
+    // Pause — skip spawning and updating
+    if (pausedRef.current) return;
 
-    // Maybe spawn
-    const interval = SPAWN_MIN + Math.random() * (SPAWN_MAX - SPAWN_MIN);
+    // Apply speed multiplier to time
+    tRef.current += dt * speedRef.current;
+
+    const interval = BASE_INTERVAL / speedRef.current;
+
     if (tRef.current - lastSpawnRef.current > interval) {
-      attacksRef.current.push(spawnAttack({ ...s, onNewEntry }));
-      // Occasional burst
-      if (Math.random() < 0.25) {
-        attacksRef.current.push(spawnAttack({ ...s, onNewEntry }));
-      }
       lastSpawnRef.current = tRef.current;
+
+      getNextEvent().then(event => {
+        if (!event || !sceneRef.current) return;
+
+        // ── FILTER CHECK ────────────────────────────────
+        const typeName = event.type?.name;
+        if (typeName && !filtersRef.current[typeName]) return; // filtered out
+
+        const atk = spawnAttack({
+          ...sceneRef.current,
+          srcName: event.srcName,
+          src:     event.src,
+          dstName: event.dstName,
+          dst:     event.dst,
+          type:    event.type,
+          onNewEntry,
+        });
+        // Apply speed to arc travel
+        atk.speed *= speedRef.current;
+        attacksRef.current.push(atk);
+
+        // Occasional burst
+        if (Math.random() < 0.2) {
+          getNextEvent().then(e2 => {
+            if (!e2 || !sceneRef.current) return;
+            if (e2.type?.name && !filtersRef.current[e2.type.name]) return;
+            const atk2 = spawnAttack({
+              ...sceneRef.current,
+              srcName: e2.srcName, src: e2.src,
+              dstName: e2.dstName, dst: e2.dst,
+              type: e2.type, onNewEntry,
+            });
+            atk2.speed *= speedRef.current;
+            attacksRef.current.push(atk2);
+          });
+        }
+      });
     }
 
-    // Update + cleanup
     attacksRef.current = updateAttacks({
       attacks: attacksRef.current,
       scene:   s.scene,
       earth:   s.earth,
     });
+  }, []);
+
+  // Filter toggle handler
+  function toggleFilter(typeName) {
+    setFilters(prev => ({ ...prev, [typeName]: !prev[typeName] }));
   }
 
-  return { tickAttacks, log, total };
+  // Select all / none
+  function setAllFilters(val) {
+    setFilters(Object.fromEntries(ATTACK_TYPES.map(t => [t.name, val])));
+  }
+
+  return {
+    tickAttacks, log, total,
+    filters, toggleFilter, setAllFilters,
+    paused,  setPaused,
+    speed,   setSpeed,
+  };
 }
