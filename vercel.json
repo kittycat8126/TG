@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/cloudflare", "destination": "/api/cloudflare.js" },
+    { "source": "/api/abuseipdb",  "destination": "/api/abuseipdb.js"  },
+    { "source": "/api/alienvault", "destination": "/api/alienvault.js" }
+  ]
+}
