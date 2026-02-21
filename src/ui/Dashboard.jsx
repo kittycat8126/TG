@@ -127,7 +127,7 @@ function StatCard({ label, value, sub, color = "#00ff88", flash }) {
 
 // ── MAIN DASHBOARD ───────────────────────────────────────────
 export default function Dashboard({ log, total, aps, threats, open, onToggle }) {
-  const [apsHistory,  setApsHistory]  = useState(Array(30).fill(0));
+  const [apsHistory,  setApsHistory]  = useState(Array(30).fill(0).map((_,i) => i < 25 ? 0 : Math.random() * 0.3));
   const [typeCounts,  setTypeCounts]  = useState({});
   const [topSources,  setTopSources]  = useState({});
   const [peakAps,     setPeakAps]     = useState(0);
